@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+*/bin/
+*/include/
+*/lib/
+*.env
+
+# IDEs and Editors
+.idea/
+.vscode/
+.DS_Store
+*.sublime-project
+*.sublime-workspace
+
+# Streamlit
+.streamlit/
+
+# ChromaDB
+chroma_db/
+
+# FAISS (if persistent files were created, though currently in-memory)
+*.faiss
+faiss_metadata.json
+
+# Jupyter Notebook (if applicable)
+.ipynb_checkpoints/
+
+# Logs and temporary files
+*.log
+*.tmp
+*.bak
+
+# Installer files
+*.egg-info/
+.nox/
+.tox/
+
+# OS generated files
+thumbs.db
+.localized
