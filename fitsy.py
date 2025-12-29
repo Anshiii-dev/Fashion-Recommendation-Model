@@ -3,21 +3,18 @@ import json
 import os
 import time
 import requests
+import uuid
 from datetime import datetime
-import chromadb
-import faiss
 import numpy as np
 from sentence_transformers import SentenceTransformer
 import pickle
-from langchain_groq import ChatGroq
-from groq import Groq
 from dotenv import load_dotenv
-from langchain.prompts import ChatPromptTemplate
-from langchain_core.output_parsers import StrOutputParser as strout
-from langchain.memory import ConversationSummaryMemory
 import re
 from PIL import Image
 import io
+
+# API Configuration
+API_URL = "http://localhost:8000"
 
 # Configure Streamlit page
 st.set_page_config(
@@ -216,42 +213,16 @@ def init_session_state():
 @st.cache_resource
 def load_env_and_models():
     load_dotenv()
-    api_key = os.getenv("GROQ_API_KEY")
-    
-    if not api_key:
-        st.error("❌ GROQ_API_KEY not found in environment variables!")
-        st.stop()
-    
-    # Initialize models
-    summary_model = "meta-llama/llama-4-scout-17b-16e-instruct"
-    recommendation_model = "openai/gpt-oss-120b"
-    
-    llm = ChatGroq(model=recommendation_model, temperature=0.8)
-    client = Groq(api_key=api_key)
-    
-    # Initialize conversation summary memory for tracking outfit recommendations
-    recommendation_memory = ConversationSummaryMemory(
-        llm=llm,
-        memory_key="history",
-        return_messages=True,
-        max_token_limit=1000  # Limit summary length
-    )
     
     # Load sentence transformer for FAISS
     embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
     
-    return api_key, llm, client, summary_model, embedding_model, recommendation_memory
-
-# Initialize ChromaDB
-@st.cache_resource
-def init_chromadb():
-    chroma_client = chromadb.PersistentClient(path="./chroma_db")
-    collection = chroma_client.get_or_create_collection(name="wardrobe")
-    return chroma_client, collection
+    return embedding_model
 
 # FAISS operations
 def create_faiss_index(items, embedding_model):
     """Create FAISS index from wardrobe items"""
+    import faiss
     if not items:
         return None, {}
     
@@ -285,6 +256,7 @@ def create_faiss_index(items, embedding_model):
 
 def search_similar_items(query, faiss_index, id_to_name, embedding_model, items, top_k=10):
     """Search for similar items using FAISS"""
+    import faiss
     if faiss_index is None:
         return []
     
@@ -320,15 +292,16 @@ def validate_url(url):
 
 def create_uniform_image_display(url, name, details, fallback_text="Image unavailable"):
     """Create HTML for uniform image display with consistent dimensions"""
+    display_name = details.get('readable_name', name) if isinstance(details, dict) else name
     try:
         if url:
             # Ensure consistent image dimensions
             processed_url = ensure_image_dimensions(url)
             return f"""
             <div class="uniform-image-container">
-                <img src="{processed_url}" alt="{name}" style="max-width: 100%; max-height: 300px; object-fit: contain;">
+                <img src="{processed_url}" alt="{display_name}" style="max-width: 100%; max-height: 300px; object-fit: contain;">
                 <div class="item-details">
-                    <strong>{name}</strong><br>
+                    <strong>{display_name}</strong><br>
                     Category: {details.get('category', 'N/A')}<br>
                     Color: {details.get('color', 'N/A')}<br>
                     Style: {details.get('style', 'N/A')}
@@ -340,7 +313,7 @@ def create_uniform_image_display(url, name, details, fallback_text="Image unavai
             return f"""
             <div class="uniform-image-container">
                 <div class="item-details">
-                    <strong>{name}</strong><br>
+                    <strong>{display_name}</strong><br>
                     Category: {details.get('category', 'N/A')}<br>
                     Color: {details.get('color', 'N/A')}<br>
                     Style: {details.get('style', 'N/A')}<br>
@@ -353,7 +326,7 @@ def create_uniform_image_display(url, name, details, fallback_text="Image unavai
         return f"""
         <div class="uniform-image-container">
             <div class="item-details">
-                <strong>{name}</strong><br>
+                <strong>{display_name}</strong><br>
                 Category: {details.get('category', 'N/A')}<br>
                 Color: {details.get('color', 'N/A')}<br>
                 Style: {details.get('style', 'N/A')}<br>
@@ -372,20 +345,18 @@ def ensure_image_dimensions(url, target_width=300, target_height=300):
         st.warning(f"Could not process image dimensions: {e}")
         return url
 
-def load_existing_items(collection):
-    """Load existing items from ChromaDB"""
+def load_existing_items():
+    """Load existing items from Backend API"""
     try:
-        existing_items = collection.get()
-        items = {}
-        
-        if existing_items["ids"]:
-            for i, item_id in enumerate(existing_items["ids"]):
-                metadata = existing_items["metadatas"][i]
-                items[item_id] = metadata
-        
-        return items
+        response = requests.get(f"{API_URL}/items/all")
+        if response.status_code == 200:
+            data = response.json()
+            return data.get("items", {})
+        else:
+            st.error(f"Failed to load items from server: {response.status_code}")
+            return {}
     except Exception as e:
-        st.error(f"Error loading existing items: {e}")
+        st.error(f"Error connecting to server: {e}")
         return {}
 
 @st.cache_data
@@ -416,6 +387,8 @@ def display_outfit_recommendation(rec, items, index):
     
     # Display recommended images
     image_names = rec.get('image_names', [])
+    readable_names = rec.get('readable_image_names', [])
+    
     if image_names:
         st.subheader("👕 Recommended Items")
         
@@ -428,11 +401,164 @@ def display_outfit_recommendation(rec, items, index):
                     item_details = items[name]
                     url = item_details.get('url', '')
                     
+                    # Determine display name
+                    display_name = name
+                    if readable_names and i < len(readable_names):
+                        display_name = readable_names[i]
+                    
+                    # Update details with readable name for display
+                    temp_details = item_details.copy() if isinstance(item_details, dict) else {}
+                    temp_details['readable_name'] = display_name
+                    
                     if url:
                         # Use the cached image loading function
-                        load_and_display_image(url, name, name, item_details)
+                        load_and_display_image(url, display_name, display_name, temp_details)
                 else:
                     st.warning(f"Item '{name}' not found in database")
+    
+    # Add Try-On Button
+    st.divider()
+    
+    # Create a unique container for this outfit's try-on section
+    with st.container():
+        col1, col2, col3 = st.columns([1, 2, 1])
+        
+        with col2:
+            if st.button(f"👤 Try On Outfit {index}", key=f"tryon_btn_{index}", use_container_width=True):
+                st.session_state[f"show_tryon_input_{index}"] = not st.session_state.get(f"show_tryon_input_{index}", False)
+        
+        # Show try-on input form if button was clicked
+        if st.session_state.get(f"show_tryon_input_{index}", False):
+            st.markdown("### 👤 Virtual Try-On")
+            st.info("Provide a photo of yourself to see how this outfit looks on you!")
+            
+            # Two options: Upload from local storage OR use URL
+            input_method = st.radio("Choose how to provide your image:", ["📤 Upload from Device", "🔗 Use Image URL"], key=f"input_method_{index}", horizontal=False)
+            
+            person_image_url = None
+            
+            if input_method == "📤 Upload from Device":
+                # File uploader for local image storage
+                uploaded_image = st.file_uploader(
+                    "Select your photo from your device:",
+                    type=["jpg", "jpeg", "png", "gif", "webp"],
+                    key=f"person_image_upload_{index}"
+                )
+                
+                if uploaded_image is not None:
+                    # Show preview of uploaded image
+                    st.image(uploaded_image, caption="Your photo preview", use_column_width=True)
+                    
+                    # Save uploaded image and create URL
+                    try:
+                        timestamp = int(time.time() * 1000)
+                        safe_filename = f"{timestamp}_person_{uploaded_image.name}"
+                        file_path = os.path.join("static/uploads", safe_filename)
+                        
+                        # Ensure directory exists
+                        os.makedirs("static/uploads", exist_ok=True)
+                        
+                        # Save the uploaded file
+                        with open(file_path, "wb") as f:
+                            f.write(uploaded_image.getbuffer())
+                        
+                        # Create local URL
+                        person_image_url = f"http://localhost:8000/static/uploads/{safe_filename}"
+                        st.success(f"✅ Image uploaded and saved!")
+                        
+                    except Exception as e:
+                        st.error(f"Error saving uploaded image: {e}")
+            
+            else:  # Use Image URL
+                person_image_input = st.text_input(
+                    "Enter person image URL:",
+                    placeholder="e.g., http://localhost:8000/static/uploads/person.jpg",
+                    key=f"person_url_{index}"
+                )
+                if person_image_input:
+                    person_image_url = person_image_input
+                    # Show preview if URL is provided
+                    try:
+                        st.image(person_image_url, caption="Image preview", use_column_width=True)
+                    except Exception as e:
+                        st.warning(f"Could not preview image: {e}")
+            
+            col_generate, col_cancel = st.columns(2)
+            
+            with col_generate:
+                if st.button("🎨 Generate Try-On Images", key=f"generate_tryon_{index}", use_container_width=True):
+                    if person_image_url:
+                        with st.spinner("🔄 Generating virtual try-on images... This may take a moment..."):
+                            try:
+                                # Read the image file and send as multipart/form-data
+                                image_file_path = None
+                                
+                                # If it's an uploaded file, find its path
+                                if use_upload and uploaded_image:
+                                    safe_filename = f"temp_{uuid.uuid4().hex}.png"
+                                    file_path = f"static/uploads/{safe_filename}"
+                                    image_file_path = file_path
+                                elif person_image_url.startswith("http"):
+                                    # For URLs, we need to download and save locally first
+                                    response_img = requests.get(person_image_url)
+                                    if response_img.status_code == 200:
+                                        safe_filename = f"temp_{uuid.uuid4().hex}.png"
+                                        file_path = f"static/uploads/{safe_filename}"
+                                        with open(file_path, "wb") as f:
+                                            f.write(response_img.content)
+                                        image_file_path = file_path
+                                
+                                if image_file_path:
+                                    # Use multipart form-data to avoid URL length limits
+                                    with open(image_file_path, "rb") as img_file:
+                                        files = {"person_image": img_file}
+                                        data = {"recommendation_image_names": image_names}
+                                        response = requests.post(
+                                            f"{API_URL}/tryon/generate",
+                                            files=files,
+                                            data=data
+                                        )
+                                    
+                                    if response.status_code == 200:
+                                        result = response.json()
+                                        
+                                        if result.get("success"):
+                                            st.success("✅ Virtual try-on images generated successfully!")
+                                            
+                                            # Display the try-on images
+                                            st.markdown("### 🎯 Try-On Results")
+                                            
+                                            col_left, col_right = st.columns(2)
+                                        
+                                        with col_left:
+                                            st.markdown("**Left Side View**")
+                                            st.image(result.get("left_side_view_url"), use_column_width=True)
+                                        
+                                        with col_right:
+                                            st.markdown("**Right Side View**")
+                                            st.image(result.get("right_side_view_url"), use_column_width=True)
+                                        
+                                        # Show outfit details
+                                        st.markdown("### 📋 Outfit Details")
+                                        for i, item in enumerate(result.get("outfit_items", []), 1):
+                                            st.write(f"{i}. {item}")
+                                        
+                                        st.balloons()
+                                        
+                                        # Keep the form open to show results
+                                    else:
+                                        st.error(f"Failed to generate try-on: {result.get('detail', 'Unknown error')}")
+                                else:
+                                    st.error(f"Server error: {response.status_code} - {response.text}")
+                            
+                            except Exception as e:
+                                st.error(f"Error generating try-on images: {e}")
+                    else:
+                        st.warning("Please upload an image or provide a valid image URL")
+            
+            with col_cancel:
+                if st.button("❌ Close Try-On", key=f"cancel_tryon_{index}", use_container_width=True):
+                    st.session_state[f"show_tryon_input_{index}"] = False
 
 # Configuration
 BATCH_SIZE = 3  # Process 3 images at a time (within the 5 image limit)
@@ -443,190 +569,48 @@ if BATCH_SIZE > 5:
     st.warning("⚠️ Batch size reduced to 5 (API limit)")
     BATCH_SIZE = 5
 
-def process_new_urls(urls, client, summary_model, collection):
-    """Process new URLs and add to database"""
-    if not urls:
+def process_uploaded_files(uploaded_files):
+    """Process uploaded files via Backend API"""
+    if not uploaded_files:
         return {}
-    
-    # Limit to 5 images per batch (Groq API limit)
-    MAX_IMAGES_PER_BATCH = 5
-    if len(urls) > MAX_IMAGES_PER_BATCH:
-        st.warning(f"⚠️ Processing {len(urls)} images in batches of {MAX_IMAGES_PER_BATCH} (API limit)")
     
     progress_bar = st.progress(0)
     status_text = st.empty()
+    status_text.text("Uploading and processing images...")
     
-    # Process URLs in batches of 5
-    all_items = {}
-    total_batches = (len(urls) + MAX_IMAGES_PER_BATCH - 1) // MAX_IMAGES_PER_BATCH
-    
-    for batch_idx in range(total_batches):
-        start_idx = batch_idx * MAX_IMAGES_PER_BATCH
-        end_idx = min(start_idx + MAX_IMAGES_PER_BATCH, len(urls))
-        batch_urls = urls[start_idx:end_idx]
+    try:
+        files = []
+        for file in uploaded_files:
+            files.append(('files', (file.name, file.getvalue(), file.type)))
         
-        st.write(f"🔄 Processing batch {batch_idx + 1}/{total_batches} ({len(batch_urls)} images)")
+        response = requests.post(f"{API_URL}/items/add", files=files)
         
-        # Create prompt for processing this batch
-        urls_str = json.dumps(batch_urls)
-        
-        prompt = f"""You are a fashion wardrobe analyzer. Your task is to analyze the provided clothing images and create descriptive names for each item.
-Task:
-Your task is that you should provie the data in that way so that when this passed to a new model to parse this it should not get 
-confused in gender or in any other way.
-- Below are the instructions for the task:
-INSTRUCTIONS:
-1. Examine each image carefully and identify what type of clothing item it is.
-2. Create a descriptive name for each item in format: "category_color_style_gender" (e.g., "top_white_oxford", "bottom_black_jeans").
-3. Categorize each item as one of: top, bottom, footwear, accessory, or outerwear.
-4. Return a single JSON object where each key is your created item name and value contains the original URL and attributes.
-
-EXACT URLS TO USE (DO NOT MODIFY THESE):
-{urls_str}
-
-RESPONSE FORMAT (strict JSON, no extra text):
-{{
-  "item_name1": {{
-    "url": "EXACT_URL_FROM_LIST_ABOVE",
-    "category": "top/bottom/footwear/accessory/outerwear",
-    "color": "descriptive color",
-    "genre":"pants/shirt/jacket/etc.",
-    "style": "brief style description",
-    "gender": "male/female",
-    "season": "spring/summer/fall/winter",
-    "fashion_type": "casual/formal/sporty/etc.",
-    "design": "brief design description",
-    "fabric": "brief fabric description",       
-    "pattern": "brief pattern description",
-    "fit": "brief fit description",
-    "occasion": "brief occasion description"
-  }}
-}}
-
-CRITICAL REQUIREMENTS:
-1. Response must be ONLY the JSON object - no markdown, no explanations, no extra text.
-2. Ensure the JSON is properly formatted and valid.
-3. Start your response with {{ and end with }} - nothing else.
-4. Create unique, descriptive names that clearly identify each item.
-5. Copy-paste the exact URLs from the list above - DO NOT create example URLs.
-6. Analyze each image in the order provided and match URLs accordingly.
-7. Be specific and detailed in your analysis - don't use generic descriptions.
-8.The Response should be strictly in JSON format and nothing else
-9.Moreover if there is an image in which there is a complete suit or it contains mutltiple you should extract multiple items from it 
-like if my suit contains all the data like accessories,top,bottom,footwear,watch,etc. you should extract all the items from it and the json should contain all the items from it and it should be reprsented as a complete outfit  if it contain top,bttom.
-and missing items like footwear should be included from the wardrobe if it suits else show it in missing items array.
-like this example:
-{{
-  "item_name1": {{
-    "url": "EXACT_URL_FROM_LIST_ABOVE",
-    "category": "top,bottom,footwear,accessory,outerwear",
-    "genre":"pants/shirt/jacket/etc.",
-    "color_top": "descriptive color",
-    "color_bottom": "descriptive color",
-    "color_footwear": "descriptive color",
-    "color_accessory": "descriptive color",
-    "color_outerwear": "descriptive color",
-    "style_top": "brief style description",
-    "style_bottom": "brief style description",
-    "style_footwear": "brief style description",
-    "style_accessory": "brief style description",
-    "style_outerwear": "brief style description",
-    "season_top": "spring/summer/fall/winter",
-    "season_bottom": "spring/summer/fall/winter",
-    "season_footwear": "spring/summer/fall/winter",
-    "season_accessory": "spring/summer/fall/winter",
-    "season_outerwear": "spring/summer/fall/winter",
-    "fashion_type_top": "casual/formal/sporty/etc.",
-    "fashion_type_bottom": "casual/formal/sporty/etc.",
-    "design_top": "brief design description",
-    "design_bottom": "brief style description",
-    "design_footwear": "brief style description",
-    "design_accessory": "brief style description",
-    "design_outerwear": "brief style description",
-    "fabric_top": "brief fabric description",
-    "fabric_bottom": "brief fabric description",
-    "fabric_footwear": "brief fabric description",
-    "fabric_accessory": "brief fabric description",
-    "fabric_outerwear": "brief fabric description",
-    "pattern_top": "brief pattern description",
-    "pattern_bottom": "brief pattern description",
-    "pattern_footwear": "brief pattern description",
-    "pattern_accessory": "brief pattern description",
-    "pattern_outerwear": "brief pattern description",
-  }}
-}}
-
-"""
-
-        try:
-            status_text.text(f"Processing batch {batch_idx + 1}/{total_batches}...")
-            progress_bar.progress((batch_idx + 1) / total_batches)
+        if response.status_code == 200:
+            result = response.json()
+            progress_bar.progress(1.0)
+            status_text.text("✅ Processing complete!")
+            return result.get("items", {})
+        else:
+            st.error(f"Server error: {response.text}")
+            return {}
             
-            # Create messages for this batch
-            messages = [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt}
-                    ] + [
-                        {"type": "image_url", "image_url": {"url": url}}
-                        for url in batch_urls
-                    ]
-                }
-            ]
-            
-            # Process with Groq
-            summary = client.chat.completions.create(
-                model=summary_model,
-                messages=messages,
-                max_tokens=2048,
-                timeout=60
-            )
-            
-            response = summary.choices[0].message.content.strip()
-            
-            # Parse JSON
-            batch_items = json.loads(response)
-            
-            # Add to ChromaDB
-            for item_name, item_details in batch_items.items():
-                # Create document for embedding
-                document = f"{item_details.get('category', '')} {item_details.get('color', '')} {item_details.get('style', '')} {item_details.get('gender', '')} {item_details.get('season', '')} {item_details.get('fashion_type', '')} {item_details.get('design', '')} {item_details.get('fabric', '')} {item_details.get('pattern', '')} {item_details.get('fit', '')} {item_details.get('occasion', '')}"
-                
-                # Add to collection
-                collection.add(
-                    ids=[item_name],
-                    documents=[document],
-                    metadatas=[item_details]
-                )
-            
-            # Merge batch results
-            all_items.update(batch_items)
-            st.success(f"✅ Batch {batch_idx + 1} processed successfully ({len(batch_items)} items)")
-            
-        except Exception as e:
-            st.error(f"❌ Error processing batch {batch_idx + 1}: {e}")
-            st.error(f"Batch URLs: {batch_urls}")
-            continue
-    
-    progress_bar.progress(1.0)
-    status_text.text("✅ All batches processed!")
-    
-    return all_items
+    except Exception as e:
+        st.error(f"Error processing files: {e}")
+        return {}
 
 def main():
     # Initialize
     init_session_state()
     
     # Load models and initialize database
-    api_key, llm, client, summary_model, embedding_model, recommendation_memory = load_env_and_models()
-    chroma_client, collection = init_chromadb()
+    embedding_model = load_env_and_models()
+    # chroma_client, collection = init_chromadb() # Removed as we use API
     
     # Header
     st.markdown('<h1 class="main-header">👗 Fashion Wardrobe AI Assistant</h1>', unsafe_allow_html=True)
     
     # Load existing items
-    existing_items = load_existing_items(collection)
+    existing_items = load_existing_items()
     
     # Create FAISS index
     if existing_items and st.session_state.faiss_index is None:
@@ -665,33 +649,25 @@ def main():
         # Add new items section
         st.markdown("### ➕ Add New Items")
         
-        new_urls_text = st.text_area(
-            "Enter image URLs (one per line):",
-            height=150,
-            placeholder="https://example.com/image1.jpg\nhttps://example.com/image2.jpg"
+        uploaded_files = st.file_uploader(
+            "Upload clothing images:",
+            type=['png', 'jpg', 'jpeg', 'webp'],
+            accept_multiple_files=True
         )
         
         if st.button("🚀 Process New Items", use_container_width=True):
-            if new_urls_text.strip():
-                urls = [url.strip() for url in new_urls_text.split('\n') if url.strip()]
-                
-                # Validate URLs
-                valid_urls = [url for url in urls if validate_url(url)]
-                
-                if valid_urls:
-                    with st.spinner("Processing images..."):
-                        new_items = process_new_urls(valid_urls, client, summary_model, collection)
-                        
-                    if new_items:
-                        st.success(f"✅ Added {len(new_items)} new items!")
-                        existing_items.update(new_items)
-                        
-                        # Update FAISS index
-                        st.session_state.faiss_index, st.session_state.item_embeddings = create_faiss_index(existing_items, embedding_model)
-                        
-                        st.rerun()
-                else:
-                    st.error("❌ No valid URLs found!")
+            if uploaded_files:
+                with st.spinner("Processing images with Gemini..."):
+                    new_items = process_uploaded_files(uploaded_files)
+                    
+                if new_items:
+                    st.success(f"✅ Added {len(new_items)} new items!")
+                    existing_items.update(new_items)
+                    
+                    # Update FAISS index
+                    st.session_state.faiss_index, st.session_state.item_embeddings = create_faiss_index(existing_items, embedding_model)
+            else:
+                st.error("❌ No files uploaded!")
 
         # User Preferences Section
         st.markdown("### 👤 Your Preferences")
@@ -737,6 +713,11 @@ def main():
                     "🔍 Describe your desired outfit:",
                     placeholder="e.g., formal party, casual weekend, business meeting"
                 )
+                
+                temperature = st.text_input(
+                    "🌡️ Current Temperature (optional):",
+                    placeholder="e.g., 25°C, 75°F, Cold, Hot"
+                )
             
             with col2:
                 num_recommendations = st.selectbox(
@@ -748,218 +729,46 @@ def main():
             if st.button("✨ Get Recommendations", use_container_width=True, type="primary"):
                 if prompt:
                     with st.spinner("Creating perfect outfits for you..."):
-                        # Use FAISS to find relevant items
-                        if st.session_state.faiss_index is not None:
-                            relevant_results = search_similar_items(
-                                prompt, 
-                                st.session_state.faiss_index, 
-                                st.session_state.item_embeddings, 
-                                embedding_model, 
-                                existing_items,
-                                top_k=30
-                            )
-                            relevant_items = {r['name']: r['details'] for r in relevant_results}
-                        else:
-                            # Fallback to ChromaDB query
-                            query_results = collection.query(
-                                query_texts=[prompt],
-                                n_results=30
-                            )
+                        try:
+                            # Prepare payload for Backend API
+                            payload = {
+                                "prompt": prompt,
+                                "num_recommendations": num_recommendations,
+                                "user_preferences": {
+                                    "eye_color": st.session_state.eye_color,
+                                    "body_type": st.session_state.body_type,
+                                    "ethnicity": st.session_state.ethnicity,
+                                    "temperature": temperature if temperature else "Not specified"
+                                }
+                            }
                             
-                            relevant_items = {}
-                            if query_results["ids"][0]:
-                                for i in range(len(query_results["ids"][0])):
-                                    item_name = query_results["ids"][0][i]
-                                    metadata = query_results["metadatas"][0][i]
-                                    relevant_items[item_name] = metadata
-                        
-                        if relevant_items:
-                            # Create a container to hold recommendations
-                            recommendations_container = st.container()
+                            # Call Backend API
+                            response = requests.post(f"{API_URL}/recommendations/get", json=payload)
                             
-                            with recommendations_container:
-                                st.write("🎨 Generating outfit recommendations...")
+                            if response.status_code == 200:
+                                result = response.json()
+                                recommendations = result.get("recommendations", [])
                                 
-                                # Get conversation summary from memory to avoid duplicate recommendations
-                                conversation_summary = recommendation_memory.moving_summary_buffer if hasattr(recommendation_memory, 'moving_summary_buffer') else ""
-                                if not conversation_summary:
-                                    # Try alternative method to get summary
-                                    try:
-                                        conversation_summary = recommendation_memory.load_memory_variables({})["history"]
-                                    except:
-                                        conversation_summary = ""
-                                
-                                history = conversation_summary if conversation_summary else "No previous recommendations yet."
-                                
-                                # Create recommendation prompt
-                                recommendation_prompt = ChatPromptTemplate.from_messages([
-                                    {"role": "system", "content": """You are a professional fashion stylist. Based on the wardrobe items provided, create {num_recommendations} complete outfit recommendations for: "{prompt}"
-
-Available items: {context}
-Additional user preferences:
-- Eye Color: {eye_color}
-- Body Type: {body_type}
-- Ethnicity: {ethnicity}
-Those preferences are very important and you should use them to generate the recommendations.
-so that the recommendations are more personalized and relevant to the user.
-Task:
-Your task is that you should parse the data which will be used to provide the data to the user according to his prompt.
-If the user asks for a formal outfit you should provide a formal outfit and if the user asks for a casual outfit you should provide a casual outfit and so on.
-- Below are the instructions for the task:
-IMPORTANT: You must respond with ONLY a valid JSON array. No explanations, no markdown, no extra text.
-**Previous Recommendations History**:
-{history}
-
-CRITICAL: You must analyze the previous recommendations history above and ensure you NEVER repeat:
-1. The exact same outfit combinations
-2. The same specific clothing items that were already recommended
-3. Similar color schemes or patterns that were already suggested
-4.Just look at the clothes name and the prompt if the prompt is same(in the history) you should suggest those clothes which were not in the history before for the same prompt.
-5.Instead of Full prompt Just look at the clothes name and the prompt if the prompt is same(in the history) you should suggest those clothes which were not in the history before for the same prompt.
-6.When all the possible recommendations them you can start giving mixed response simple
-If you see that certain items or combinations were already recommended, you MUST choose different items or create different combinations. This ensures the user gets diverse, non-repetitive outfit suggestions.
-
-**Important:**
-Return your response as a JSON array where each recommendation has:
-- recommendation: Brief description of the complete outfit
-- reason: Why this outfit works for the occasion 
-- image_names: Array of item names that make up this outfit complete 
-- You should generate complete outfits and not just a part of it.It should be a complete outfit containing all the items (top,bottom,footwear are necessary items you should include them always accesoires are optional means if they look good together you can include them) that are present in the available wardrobe.
-and those items should look good together and
--Only Include missing items in the missing_items array if there is no relevant thing that can be used to complete the outfit.
-- Be 100 percent specific in genders also specify in the recommendations.
--There should be no mixup of genders female data should be included in the female outfits and mens data should be included in the mens outfits.
-Expected JSON format (copy this exactly and fill in your recommendations):
-[
-  {{
-    "recommendation": "Complete outfit description and also tell why this outfit suits the user according to the eye color, body type, ethnicity.",
-    "reason": "Why this works",
-    "image_names": ["item1", "item2", "item3"](must contain top,bottom,footwear),
-    "missing_items": ["missing_item1", "missing_item2"]
-  }}
-]
-
-CRITICAL: 
-1. Start your response with [ and end with ]
-2. Use only items that exist in the available wardrobe
-3. Be creative but practical with combinations
-4. Consider color coordination, style matching, and occasion appropriateness
-5. NO markdown formatting, NO explanations, ONLY the JSON array"""}
-                                ])
-                                
-                                chain = recommendation_prompt | llm | strout()
-                                
-                                try:
-                                    st.write("🤖 Invoking LLM with prompt...")
-                                    st.write("Prompt variables:")
-                                    st.json({
-                                        "prompt": prompt,
-                                        "context_length": len(json.dumps(relevant_items, indent=2)),
-                                        "num_recommendations": num_recommendations
-                                    })
-                                    
-                                    recommendation_str = chain.invoke({
-                                        "prompt": prompt,
-                                        "context": json.dumps(relevant_items, indent=2),
-                                        "num_recommendations": num_recommendations,
-                                        "history": history,
-                                        "eye_color": st.session_state.eye_color,
-                                        "body_type": st.session_state.body_type,
-                                        "ethnicity": st.session_state.ethnicity
-                                    })
-                                    # Save to memory to track recommendations and avoid duplicates
-                                    recommendation_memory.save_context(
-                                        {"input": f"User requested: {prompt}"}, 
-                                        {"output": f"Generated recommendations: {recommendation_str}"}
-                                    )
-                                    st.write("✅ LLM response received")
-                                    st.write(f"Response length: {len(recommendation_str)} characters")
-                                    
-                                    # Debug: Show what the LLM returned
-                                    st.write("🔍 Raw LLM response:")
-                                    st.code(recommendation_str, language="text")
-                                    
-                                    # Check if response is empty or whitespace
-                                    if not recommendation_str or recommendation_str.strip() == "":
-                                        st.error("❌ LLM returned empty response. Please try again.")
-                                        return
-                                    
-                                    # Try to clean the response if it contains markdown or extra text
-                                    cleaned_response = recommendation_str.strip()
-                                    
-                                    # Remove markdown code blocks if present
-                                    if cleaned_response.startswith("```json"):
-                                        cleaned_response = cleaned_response[7:]
-                                    if cleaned_response.endswith("```"):
-                                        cleaned_response = cleaned_response[:-3]
-                                    
-                                    # Remove any leading/trailing whitespace
-                                    cleaned_response = cleaned_response.strip()
-                                    
-                                    st.write("🧹 Cleaned response:")
-                                    st.code(cleaned_response, language="json")
-                                    
-                                    # Parse recommendations
-                                    try:
-                                        recommendations = json.loads(cleaned_response)
-                                    except json.JSONDecodeError as json_error:
-                                        st.error(f"❌ Failed to parse JSON response: {json_error}")
-                                        st.error("Raw response was:")
-                                        st.code(cleaned_response, language="text")
-                                        st.error("This usually means the AI didn't return valid JSON. Please try again.")
-                                        return
-                                    
-                                    # Validate the parsed recommendations
-                                    if not isinstance(recommendations, list):
-                                        st.error("❌ Response is not a list. Expected a JSON array of recommendations.")
-                                        st.error("Raw response was:")
-                                        st.code(cleaned_response, language="text")
-                                        return
-                                    
-                                    if len(recommendations) == 0:
-                                        st.error("❌ No recommendations generated. Please try again.")
-                                        return
-                                    
-                                    # Validate each recommendation
-                                    valid_recommendations = []
-                                    for i, rec in enumerate(recommendations):
-                                        if not isinstance(rec, dict):
-                                            st.warning(f"⚠️ Recommendation {i+1} is not a valid object, skipping...")
-                                            continue
-                                        
-                                        required_fields = ['recommendation', 'reason', 'image_names', 'missing_items']
-                                        missing_fields = [field for field in required_fields if field not in rec]
-                                        
-                                        if missing_fields:
-                                            st.warning(f"⚠️ Recommendation {i+1} missing fields: {missing_fields}, skipping...")
-                                            continue
-                                        
-                                        valid_recommendations.append(rec)
-                                    
-                                    if not valid_recommendations:
-                                        st.error("❌ No valid recommendations found. Please try again.")
-                                        return
-                                    
-                                    # Display valid recommendations
-                                    st.write(f"🎉 Generated {len(valid_recommendations)} outfit recommendations!")
+                                if recommendations:
+                                    st.write(f"🎉 Generated {len(recommendations)} outfit recommendations!")
                                     
                                     # Add a small delay to ensure everything is rendered
                                     time.sleep(0.5)
                                     
-                                    for i, rec in enumerate(valid_recommendations, 1):
+                                    for i, rec in enumerate(recommendations, 1):
                                         st.write(f"📸 Displaying outfit {i}...")
                                         display_outfit_recommendation(rec, existing_items, i)
                                         st.write(f"✅ Outfit {i} displayed successfully")
                                     
                                     st.success("🎊 All outfit recommendations have been generated and displayed!")
                                     st.balloons()
-                                    
-                                except Exception as e:
-                                    st.error(f"Error generating recommendations: {e}")
-                                    st.error("Raw response was:")
-                                    # st.code(recommendation_str, language="text")
-                        else:
-                            st.warning("No relevant items found for your prompt. Try a different description.")
+                                else:
+                                    st.warning("No recommendations generated. Try a different prompt.")
+                            else:
+                                st.error(f"Server error: {response.status_code} - {response.text}")
+                                
+                        except Exception as e:
+                            st.error(f"Error connecting to server: {e}")
                 else:
                     st.warning("Please enter a prompt for outfit recommendations.")
     
@@ -1004,8 +813,8 @@ CRITICAL:
         
         # Chat input
         user_input = st.text_input(
-            "💭 Ask me about your wardrobe, fashion advice, or anything else:",
-            placeholder="e.g., Show me all my formal shirts, What colors go well with navy blue?"
+            "💭 Search your wardrobe:",
+            placeholder="e.g., Show me all my formal shirts, Find my blue jeans..."
         )
         
         col1, col2 = st.columns([1, 4])
@@ -1021,19 +830,14 @@ CRITICAL:
             # Also clear displayed images
             if 'displayed_images' in st.session_state:
                 st.session_state.displayed_images = []
-            st.rerun()
         
         if send_button and user_input:
             # Add user message to history
             st.session_state.chat_history.append({"role": "user", "content": user_input})
             
-            with st.spinner("Thinking..."):
+            with st.spinner("Searching..."):
                 try:
-                    # Check if user is asking for specific items or general conversation
-                    is_wardrobe_query = any(keyword in user_input.lower() for keyword in 
-                                          ['show', 'find', 'search', 'wardrobe', 'clothes', 'outfit', 'shirt', 'pants', 'dress', 'shoe'])
-                    
-                    if is_wardrobe_query and existing_items:
+                    if existing_items:
                         # Use FAISS to find relevant items
                         if st.session_state.faiss_index is not None:
                             relevant_results = search_similar_items(
@@ -1104,53 +908,15 @@ CRITICAL:
                             # Store the displayed images in session state
                             st.session_state.displayed_images = current_images
                             
-                            # Debug info
-                            st.write(f"📸 Stored {len(current_images)} images in session state")
-                            st.write("Image URLs stored:")
-                            for img in current_images:
-                                st.write(f"- {img['name']}: {img['url'][:50]}...")
-                            
                         else:
                             response = "I couldn't find any items matching your query. Try describing the items differently or add more items to your wardrobe."
                             st.session_state.chat_history.append({"role": "assistant", "content": response})
-                    
                     else:
-                        # General conversation using LLM
-                        chat_prompt = ChatPromptTemplate.from_messages([
-                            {"role": "system", "content": """You are a helpful fashion assistant. You can help with fashion advice, styling tips, color coordination, and general wardrobe questions. Be friendly, knowledgeable, and concise in your responses."""},
-                            {"role": "user", "content": user_input}
-                        ])
-                        
-                        chain = chat_prompt | llm | strout()
-                        response = chain.invoke({"input": user_input})
-                        
-                        st.session_state.chat_history.append({"role": "assistant", "content": response})
+                        st.warning("No items in wardrobe to search.")
                 
                 except Exception as e:
                     error_response = f"I encountered an error: {e}. Please try again."
                     st.session_state.chat_history.append({"role": "assistant", "content": error_response})
-            
-            st.rerun()
-        
-        # Show current recommendation memory summary
-        with st.expander("🧠 Current Recommendation Memory", expanded=False):
-            try:
-                memory_vars = recommendation_memory.load_memory_variables({})
-                conversation_summary = memory_vars.get("history", "")
-                
-                if conversation_summary:
-                    st.write("**Previous Recommendations Summary:**")
-                    st.info(conversation_summary)
-                    
-                    # Add clear memory button
-                    if st.button("🗑️ Clear Recommendation Memory", type="secondary"):
-                        recommendation_memory.clear()
-                        st.success("Recommendation memory cleared!")
-                        st.rerun()
-                else:
-                    st.write("No previous recommendations stored yet.")
-            except Exception as e:
-                st.write(f"No previous recommendations stored yet. (Error: {e})")
         
         # Show database items if available
         if existing_items:

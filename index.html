@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fitsy - Fashion Wardrobe AI Assistant</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <!-- Navigation Bar -->
+    <nav class="navbar">
+        <div class="nav-container">
+            <div class="logo">
+                <span class="logo-icon">👗</span>
+                <span class="logo-text">FITSY</span>
+            </div>
+            <ul class="nav-menu">
+                <li><a href="#" onclick="showPage('home')" class="nav-link active">Home</a></li>
+                <li><a href="#" onclick="showPage('wardrobe')" class="nav-link">My Wardrobe</a></li>
+                <li><a href="#" onclick="showPage('recommendations')" class="nav-link">Get Recommendations</a></li>
+                <li><a href="#" onclick="showPage('tryon')" class="nav-link">Virtual Try-On</a></li>
+                <li><a href="#" onclick="showPage('chat')" class="nav-link">Chat Assistant</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <!-- Home Page -->
+    <div id="home" class="page active">
+        <div class="hero-section">
+            <div class="hero-content">
+                <h1>Welcome to Fitsy</h1>
+                <p>Your AI-Powered Fashion Wardrobe Assistant</p>
+                <div class="hero-buttons">
+                    <button class="btn btn-primary" onclick="showPage('wardrobe')">Browse Wardrobe</button>
+                    <button class="btn btn-secondary" onclick="showPage('recommendations')">Get Outfit Ideas</button>
+                </div>
+            </div>
+            <div class="hero-image">
+                <div class="hero-placeholder">👔👗👠</div>
+            </div>
+        </div>
+
+        <!-- Features Section -->
+        <section class="features">
+            <h2>Why Choose Fitsy?</h2>
+            <div class="features-grid">
+                <div class="feature-card">
+                    <div class="feature-icon">🧠</div>
+                    <h3>AI-Powered</h3>
+                    <p>Smart recommendations based on your preferences and style</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">👤</div>
+                    <h3>Virtual Try-On</h3>
+                    <p>See how outfits look on you before wearing them</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🎨</div>
+                    <h3>Style Guide</h3>
+                    <p>Get personalized fashion advice from our AI assistant</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">📊</div>
+                    <h3>Wardrobe Stats</h3>
+                    <p>Track and organize your clothing collection easily</p>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <!-- Wardrobe Page -->
+    <div id="wardrobe" class="page">
+        <div class="page-header">
+            <h1>👗 My Wardrobe</h1>
+            <p>Manage and organize your clothing collection</p>
+        </div>
+
+        <div class="wardrobe-container">
+            <!-- Sidebar -->
+            <aside class="sidebar">
+                <div class="sidebar-section">
+                    <h3>📊 Statistics</h3>
+                    <div class="stat-item">
+                        <span>Total Items</span>
+                        <span class="stat-value" id="totalItems">0</span>
+                    </div>
+                    <div class="stat-item">
+                        <span>Categories</span>
+                        <span class="stat-value" id="totalCategories">0</span>
+                    </div>
+                </div>
+
+                <div class="sidebar-section">
+                    <h3>🔍 Filter</h3>
+                    <select id="categoryFilter" onchange="filterWardrobe()" class="filter-select">
+                        <option value="all">All Categories</option>
+                    </select>
+                </div>
+
+                <div class="sidebar-section">
+                    <h3>➕ Add Items</h3>
+                    <label class="file-upload">
+                        <input type="file" id="wardrobeUpload" multiple accept="image/*">
+                        <span>📤 Upload Images</span>
+                    </label>
+                    <div id="wardrobeUploadPreview" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(60px, 1fr)); gap: 8px; margin-top: 10px; max-height: 300px; overflow-y: auto;">
+                        <!-- Previews will be added here -->
+                    </div>
+                    <button class="btn btn-primary btn-small" onclick="processWardrobeItems()" style="margin-top: 0.5rem;">Process Items</button>
+                    
+                    <div id="wardrobeLoadingSpinner" class="loading-spinner" style="display: none; margin-top: 1rem;">
+                        <div class="spinner"></div>
+                        <p style="font-size: 0.9rem;">Processing items...</p>
+                    </div>
+                </div>
+
+                <div class="sidebar-section">
+                    <h3>🗑️ Manage Items</h3>
+                    <button class="btn btn-danger btn-small" onclick="deleteAllItems()">Delete All Items</button>
+                </div>
+            </aside>
+
+            <!-- Main Content -->
+            <main class="wardrobe-main">
+                <div class="items-grid" id="wardrobeGrid">
+                    <div class="empty-state">
+                        <p>No items in your wardrobe yet</p>
+                        <p>Upload clothing images to get started</p>
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <!-- Recommendations Page -->
+    <div id="recommendations" class="page">
+        <div class="page-header">
+            <h1>🎯 Get Outfit Recommendations</h1>
+            <p>Let our AI create perfect outfits for you</p>
+        </div>
+
+        <div class="recommendations-container">
+            <!-- Form Section -->
+            <section class="form-section">
+                <div class="form-group">
+                    <label for="prompt">Describe Your Desired Outfit</label>
+                    <input type="text" id="prompt" placeholder="e.g., formal party, casual weekend, business meeting" class="form-input">
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="temperature">Current Temperature (Optional)</label>
+                        <input type="text" id="temperature" placeholder="e.g., 25°C, 75°F, Cold, Hot" class="form-input">
+                    </div>
+                    <div class="form-group">
+                        <label for="numRecommendations">Number of Outfits</label>
+                        <select id="numRecommendations" class="form-input">
+                            <option>1</option>
+                            <option>2</option>
+                            <option selected>3</option>
+                            <option>4</option>
+                            <option>5</option>
+                        </select>
+                    </div>
+                </div>
+
+                <details class="preferences-section">
+                    <summary>👤 Your Preferences</summary>
+                    <div class="preferences-grid">
+                        <div class="form-group">
+                            <label for="eyeColor">Eye Color</label>
+                            <select id="eyeColor" class="form-input">
+                                <option>Not specified</option>
+                                <option>Brown</option>
+                                <option>Blue</option>
+                                <option>Green</option>
+                                <option>Hazel</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="bodyType">Body Type</label>
+                            <select id="bodyType" class="form-input">
+                                <option>Not specified</option>
+                                <option>Triangle</option>
+                                <option>Inverted Triangle</option>
+                                <option>Rectangle</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="ethnicity">Ethnicity</label>
+                            <select id="ethnicity" class="form-input">
+                                <option>Not specified</option>
+                                <option>Asian</option>
+                                <option>Black</option>
+                                <option>Caucasian</option>
+                                <option>Hispanic</option>
+                            </select>
+                        </div>
+                    </div>
+                </details>
+
+                <button class="btn btn-primary btn-large" onclick="getRecommendations()">✨ Get Recommendations</button>
+
+                <div id="recommendationsLoadingSpinner" class="loading-spinner" style="display: none;">
+                    <div class="spinner"></div>
+                    <p>Getting outfit recommendations...</p>
+                </div>
+            </section>
+
+            <!-- Results Section -->
+            <section class="results-section">
+                <div id="recommendationsResults" class="recommendations-grid">
+                    <div class="empty-state">
+                        <p>Fill in the form and click "Get Recommendations" to see results</p>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </div>
+
+    <!-- Virtual Try-On Page -->
+    <div id="tryon" class="page">
+        <div class="page-header">
+            <h1>✨ Virtual Try-On</h1>
+            <p>See how outfits look on you with AI</p>
+        </div>
+
+        <div class="tryon-container">
+            <div class="tryon-layout">
+                <!-- Left Section: Upload & Selection -->
+                <section class="tryon-sidebar">
+                    <div class="sidebar-card">
+                        <h2>1️⃣ Your Photo</h2>
+                        <div class="upload-area" id="uploadArea">
+                            <input type="file" id="personImageUpload" accept="image/*" style="display: none;">
+                            <div class="upload-content" onclick="document.getElementById('personImageUpload').click()">
+                                <div class="upload-icon">📷</div>
+                                <p>Click to upload your photo</p>
+                                <small>JPG, PNG • Max 5MB</small>
+                            </div>
+                        </div>
+
+                        <div id="personImagePreview" class="image-preview" style="display: none;">
+                            <img id="previewImage" src="" alt="Preview">
+                            <button class="btn-small" onclick="document.getElementById('personImageUpload').click()">Change Photo</button>
+                        </div>
+                    </div>
+
+                    <!-- Tabs for Outfit Source -->
+                    <div class="sidebar-card">
+                        <h2>2️⃣ Select Outfit Source</h2>
+                        <div class="tabs">
+                            <button class="tab-btn active" onclick="switchTryOnTab('recommendations')">📋 Recommendations</button>
+                        </div>
+                    </div>
+
+                    <!-- Recommendations Tab -->
+                    <div id="recommendationsTab" class="sidebar-card tab-content active">
+                        <label for="recommendationSelect">Select an outfit</label>
+                        <select id="recommendationSelect" class="form-input">
+                            <option>No recommendations yet. Get recommendations first!</option>
+                        </select>
+                        <p class="help-text" id="outfitDescription" style="display: none;"></p>
+                    </div>
+
+                    <button class="btn btn-primary btn-large" onclick="generateTryOn()" id="generateBtn">
+                        <span class="btn-icon">✨</span> Generate Try-On
+                    </button>
+
+                    <div id="loadingSpinner" class="loading-spinner" style="display: none;">
+                        <div class="spinner"></div>
+                        <p>Creating your AI try-on...</p>
+                    </div>
+                </section>
+
+                <!-- Right Section: Results -->
+                <section id="tryonResults" class="tryon-results-section" style="display: none;">
+                    <div class="result-card">
+                        <div class="result-header">
+                            <h2>✅ Try-On Ready!</h2>
+                            <p id="modelDesc">Here's how you look in this outfit</p>
+                        </div>
+                        
+                        <div class="result-image-container">
+                            <img id="tryonImage" src="" alt="Try-on result" class="tryon-image">
+                        </div>
+
+                        <div id="outfitDetails" class="outfit-details">
+                            <h3>📦 Outfit Items</h3>
+                            <ul id="outfitList"></ul>
+                        </div>
+
+                        <div class="result-actions">
+                            <button class="btn btn-secondary" onclick="downloadTryOn()">⬇️ Download</button>
+                            <button class="btn btn-secondary" onclick="shareTryOn()">📤 Share</button>
+                            <button class="btn btn-secondary" onclick="generateAnotherTryon()">🔄 Try Another</button>
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </div>
+    </div>
+
+    <!-- Chat Page -->
+    <div id="chat" class="page">
+        <div class="page-header">
+            <h1>💬 Chat Assistant</h1>
+            <p>Ask questions about your wardrobe</p>
+        </div>
+
+        <div class="chat-container">
+            <div class="chat-messages" id="chatMessages">
+                <div class="message bot-message">
+                    <p>👋 Hi! I'm your fashion assistant. Ask me anything about your wardrobe!</p>
+                </div>
+            </div>
+
+            <div class="chat-input-area">
+                <input type="text" id="chatInput" placeholder="Search your wardrobe..." class="chat-input" onkeypress="handleChatKeyPress(event)">
+                <button class="btn btn-primary" onclick="sendChatMessage()">Send</button>
+                <button class="btn btn-secondary" onclick="clearChat()">Clear</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading Spinner -->
+    <div id="loadingSpinner" class="loading-spinner" style="display: none;">
+        <div class="spinner"></div>
+        <p>Processing...</p>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="toast"></div>
+
+    <script src="script.js?v=3"></script>
+</body>
+</html>
